@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jimmy - Ваш AI-ассистент</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/intro.js@7.2.0/minified/introjs.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/intro.js@7.2.0/minified/intro.min.js"></script>
+    <style>
+        :root {
+            --sidebar-bg: #1e293b;
+            --sidebar-text: #e2e8f0;
+            --chat-bg: #0f172a;
+            --chat-user: #334155;
+            --chat-ai: #1e293b;
+            --accent: #3b82f6;
+        }
+        body { height: 100vh; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .app-container { display: grid; grid-template-columns: 25% 50% 25%; height: 100vh; }
+        .panel { display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #334155; }
+        .panel:last-child { border-right: none; }
+        .panel-header { padding: 1rem; font-weight: 600; background: var(--sidebar-bg); color: var(--sidebar-text); }
+        .panel-body { flex: 1; overflow-y: auto; padding: 1rem; }
+        .files-panel { background: var(--sidebar-bg); color: var(--sidebar-text); }
+        .chat-panel { background: var(--chat-bg); color: #e2e8f0; }
+        .tools-panel { background: var(--sidebar-bg); color: var(--sidebar-text); }
+        .drop-zone {
+            border: 2px dashed #475569;
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 1rem;
+        }
+        .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(59, 130, 246, 0.1); }
+        .drop-zone.disabled { pointer-events: none; opacity: 0.6; }
+        .upload-indicator { display: none; padding: 1rem; text-align: center; }
+        .upload-indicator.active { display: block; }
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 6px;
+            margin-bottom: 0.25rem;
+        }
+        .file-item:hover { background: rgba(255,255,255,0.05); }
+        .file-item .form-check-input { margin-top: 0; }
+        .file-item .btn-link { color: #94a3b8; padding: 0.25rem; }
+        .file-item .btn-link:hover { color: #ef4444; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 1rem; }
+        .message { max-width: 85%; margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: 12px; }
+        .message.user { background: var(--chat-user); margin-left: auto; }
+        .message.assistant { background: var(--chat-ai); }
+        .chat-input-area { padding: 1rem; border-top: 1px solid #334155; }
+        .spinner-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        .spinner-overlay.active { display: flex; }
+        .alert-ollama { margin: 1rem; }
+        .tools-panel { flex-direction: column; }
+        .tools-section { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+        .tools-section-header { padding: 0.5rem 1rem; font-weight: 600; font-size: 0.9rem; }
+        .tools-section-body { flex: 1; overflow-y: auto; padding: 1rem; }
+        .result-card { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 0.5rem; }
+        .result-card a { color: var(--accent); }
+        .result-card a:hover { color: #60a5fa; }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Левая колонка: Управление файлами -->
+        <div class="panel files-panel" id="filesPanel">
+            <div class="panel-header">Управление файлами</div>
+            <div class="panel-body">
+                <div id="ollamaAlert" class="alert alert-warning alert-ollama" style="display:none;">
+                    <i class="bi bi-exclamation-triangle"></i> Сервер ИИ недоступен. Запустите Ollama.
+                </div>
+                <div class="drop-zone" id="dropZone">
+                    <i class="bi bi-cloud-arrow-up fs-1"></i>
+                    <p class="mb-0 mt-2">Перетащите файлы сюда или нажмите для выбора</p>
+                    <small class="text-muted">PDF, Word (.docx), Excel (.xlsx)</small>
+                    <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx" class="d-none">
+                </div>
+                <div class="upload-indicator" id="uploadIndicator">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <span class="ms-2">Идет обработка и векторизация...</span>
+                </div>
+                <div id="fileList"></div>
+            </div>
+        </div>
+
+        <!-- Центральная колонка: Чат -->
+        <div class="panel chat-panel" style="position: relative;" id="chatPanel">
+            <div class="panel-header">Чат</div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="text-center text-muted py-4" id="chatPlaceholder">
+                    Сначала выберите хотя бы один файл слева для начала работы
+                </div>
+            </div>
+            <div class="chat-input-area">
+                <div class="input-group">
+                    <input type="text" class="form-control bg-dark text-light border-secondary" id="questionInput"
+                           placeholder="Сначала выберите хотя бы один файл слева для начала работы" autocomplete="off">
+                    <button class="btn btn-primary" id="sendBtn" type="button">
+                        <i class="bi bi-send"></i> Отправить
+                    </button>
+                </div>
+            </div>
+            <div class="spinner-overlay" id="spinnerOverlay">
+                <div class="spinner-border text-primary" role="status"></div>
+            </div>
+        </div>
+
+        <!-- Правая колонка: Инструменты + Результаты -->
+        <div class="panel tools-panel" id="toolsPanel">
+            <div class="tools-section">
+                <div class="tools-section-header">Инструменты</div>
+                <div class="tools-section-body">
+                    <button class="btn btn-primary w-100 mb-2" id="createReportBtn">
+                        <i class="bi bi-file-earmark-word"></i> Создать отчёт
+                    </button>
+                    <button class="btn btn-outline-primary w-100" id="createPresentationBtn">
+                        <i class="bi bi-easel"></i> Создать презентацию
+                    </button>
+                </div>
+            </div>
+            <div class="tools-section">
+                <div class="tools-section-header">Результаты</div>
+                <div class="tools-section-body" id="resultsList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно: Создать отчёт -->
+    <div class="modal fade" id="reportModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Создать отчёт</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control bg-dark text-light border-secondary mb-2" id="reportPromptInput"
+                        rows="2" placeholder="Введите тему для собственного отчёта..."></textarea>
+                    <button class="btn btn-primary w-100 mb-3" id="generateCustomReportBtn">Сгенерировать свой отчёт</button>
+                    <div class="text-center text-muted small mb-2">ИЛИ</div>
+                    <p class="small mb-2">Рекомендуемые темы на основе ваших файлов:</p>
+                    <div id="suggestedTopics" class="d-flex flex-column gap-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно: Создать презентацию -->
+    <div class="modal fade" id="presentationModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Создать презентацию</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <textarea class="form-control bg-dark text-light border-secondary mb-2" id="presentationPromptInput"
+                        rows="2" placeholder="Введите тему презентации..."></textarea>
+                    <button class="btn btn-primary w-100 mb-3" id="generatePresentationBtn">Сгенерировать презентацию</button>
+                    <div class="text-center text-muted small mb-2">ИЛИ</div>
+                    <p class="small mb-2">Рекомендуемые темы на основе ваших файлов:</p>
+                    <div id="presentationSuggestedTopics" class="d-flex flex-column gap-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatPlaceholder = document.getElementById('chatPlaceholder');
+        const questionInput = document.getElementById('questionInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const spinnerOverlay = document.getElementById('spinnerOverlay');
+        const ollamaAlert = document.getElementById('ollamaAlert');
+        const uploadIndicator = document.getElementById('uploadIndicator');
+
+        function setUploading(loading) {
+            dropZone.classList.toggle('disabled', loading);
+            fileInput.disabled = loading;
+            questionInput.disabled = loading;
+            sendBtn.disabled = loading;
+            uploadIndicator.classList.toggle('active', loading);
+        }
+
+        function hideOllamaError() { ollamaAlert.style.display = 'none'; }
+        function showOllamaError() { ollamaAlert.style.display = 'block'; }
+
+        // Проверка Ollama с retry (2-3 попытки, интервал 2 сек)
+        async function checkOllama() {
+            const maxRetries = 3;
+            const delayMs = 2000;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const r = await fetch('/api/health');
+                    const d = await r.json();
+                    if (d.ollama_available) { hideOllamaError(); return; }
+                } catch {}
+                if (i < maxRetries - 1) await new Promise(r => setTimeout(r, delayMs));
+            }
+            showOllamaError();
+        }
+
+        // Сброс ошибки при новом действии
+        function onUserAction() { hideOllamaError(); }
+
+        // Выбранные файлы (галочки) — для фильтрации RAG
+        function getSelectedFiles() {
+            const items = fileList.querySelectorAll('.file-item');
+            const selected = [];
+            items.forEach(item => {
+                const cb = item.querySelector('input[type="checkbox"]');
+                const name = item.dataset.filename;
+                if (cb?.checked && name) selected.push(name);
+            });
+            return selected;
+        }
+
+        // Блокировка UI при отсутствии выбранных файлов
+        function updateLocksBasedOnSelection() {
+            const hasSelection = getSelectedFiles().length > 0;
+            questionInput.disabled = !hasSelection;
+            sendBtn.disabled = !hasSelection;
+            createReportBtn.disabled = !hasSelection;
+            createPresentationBtn.disabled = !hasSelection;
+            questionInput.placeholder = hasSelection ? 'Введите вопрос...' : 'Сначала выберите хотя бы один файл слева для начала работы';
+            if (chatPlaceholder) chatPlaceholder.textContent = hasSelection ? 'Задайте вопрос по загруженным документам' : 'Сначала выберите хотя бы один файл слева для начала работы';
+        }
+
+        // Загрузка списка файлов
+        async function loadFiles() {
+            try {
+                const r = await fetch('/api/files');
+                const d = await r.json();
+                renderFileList(d.files || []);
+            } catch (e) {
+                fileList.innerHTML = '<div class="text-danger small">Ошибка загрузки</div>';
+            }
+        }
+
+        function renderFileList(files) {
+            if (files.length === 0) {
+                fileList.innerHTML = '<div class="text-muted small">Нет загруженных файлов</div>';
+                updateLocksBasedOnSelection();
+                return;
+            }
+            fileList.innerHTML = files.map(f => {
+                const id = 'cb_' + f.replace(/[^a-zA-Z0-9.-]/g, '_');
+                return `
+                <div class="file-item" data-filename="${escapeHtml(f)}">
+                    <input class="form-check-input" type="checkbox" id="${id}">
+                    <label class="form-check-label flex-grow-1 small text-truncate" for="${id}">${escapeHtml(f)}</label>
+                    <button class="btn btn-link btn-sm p-0 btn-delete-file" data-filename="${escapeHtml(f)}" title="Удалить">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `}).join('');
+            fileList.querySelectorAll('.btn-delete-file').forEach(btn => {
+                btn.addEventListener('click', () => deleteFile(btn.dataset.filename));
+            });
+            fileList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', updateLocksBasedOnSelection);
+            });
+            updateLocksBasedOnSelection();
+        }
+
+        // Загрузка сгенерированных результатов (отчёты, презентации)
+        async function loadResults() {
+            try {
+                const r = await fetch('/api/tools/results');
+                const items = await r.json();
+                renderResults(items);
+            } catch (e) {
+                resultsList.innerHTML = '<div class="text-danger small">Ошибка загрузки</div>';
+            }
+        }
+
+        function renderResults(items) {
+            if (!items || items.length === 0) {
+                resultsList.innerHTML = '<div class="text-muted small">Нет сгенерированных файлов</div>';
+                return;
+            }
+            resultsList.innerHTML = items.map(item => {
+                const icon = item.type === 'report' ? 'bi-file-earmark-word' : 'bi-easel';
+                const label = item.type === 'report' ? 'Отчёт' : 'Презентация';
+                return `<div class="result-card">
+                    <i class="bi ${icon} fs-4"></i>
+                    <div class="flex-grow-1 small text-truncate" title="${escapeHtml(item.filename)}">${escapeHtml(label)}</div>
+                    <a href="${item.url}" download="${escapeHtml(item.filename)}"><i class="bi bi-download"></i> Скачать</a>
+                </div>`;
+            }).join('');
+        }
+
+        function escapeHtml(s) {
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+        function escapeAttr(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        async function deleteFile(filename) {
+            if (!confirm(`Удалить файл "${filename}"?`)) return;
+            try {
+                const r = await fetch(`/api/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                if (r.ok) loadFiles();
+                else alert('Ошибка удаления');
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Drag & Drop
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+        });
+        dropZone.addEventListener('click', () => onUserAction());
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length) uploadFiles(e.target.files); });
+
+        async function uploadFiles(files) {
+            const formData = new FormData();
+            for (const f of files) {
+                const ext = f.name.toLowerCase().slice(-5);
+                if (ext.endsWith('.pdf') || ext.endsWith('.docx') || ext.endsWith('.xlsx'))
+                    formData.append('files', f);
+            }
+            if (formData.getAll('files').length === 0) {
+                alert('Поддерживаются только PDF, Word (.docx), Excel (.xlsx)');
+                return;
+            }
+            setUploading(true);
+            onUserAction();
+            try {
+                const r = await fetch('/api/files/upload', { method: 'POST', body: formData });
+                const d = await r.json();
+                if (r.ok && d.uploaded?.length) hideOllamaError();
+                if (d.uploaded?.length) loadFiles();
+                if (d.errors?.length) alert('Ошибки:\n' + d.errors.join('\n'));
+            } catch (e) {
+                alert('Ошибка загрузки: ' + e.message);
+            } finally {
+                setUploading(false);
+            }
+        }
+
+        // Чат
+        function addMessage(role, text) {
+            chatPlaceholder?.remove();
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.textContent = text;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        sendBtn.addEventListener('click', sendQuestion);
+        questionInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendQuestion(); });
+
+        async function sendQuestion() {
+            const q = questionInput.value.trim();
+            if (!q) return;
+            onUserAction();
+            questionInput.value = '';
+            addMessage('user', q);
+            spinnerOverlay.classList.add('active');
+            sendBtn.disabled = true;
+            try {
+                const r = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: q, selected_files: getSelectedFiles() })
+                });
+                const d = await r.json();
+                if (r.ok) addMessage('assistant', d.answer);
+                else addMessage('assistant', 'Ошибка: ' + (d.error || r.statusText));
+            } catch (e) {
+                addMessage('assistant', 'Ошибка: ' + e.message);
+            } finally {
+                spinnerOverlay.classList.remove('active');
+                sendBtn.disabled = false;
+            }
+        }
+
+        // === Модальное окно и генерация отчётов ===
+        const reportModal = new bootstrap.Modal(document.getElementById('reportModal'));
+        const reportPromptInput = document.getElementById('reportPromptInput');
+        const generateCustomReportBtn = document.getElementById('generateCustomReportBtn');
+        const suggestedTopics = document.getElementById('suggestedTopics');
+        const resultsList = document.getElementById('resultsList');
+        const createReportBtn = document.getElementById('createReportBtn');
+
+        createReportBtn.addEventListener('click', async () => {
+            onUserAction();
+            reportPromptInput.value = '';
+            suggestedTopics.innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div>';
+            reportModal.show();
+            const sel = getSelectedFiles();
+            const qs = sel.length ? '?' + sel.map(f => 'selected_files=' + encodeURIComponent(f)).join('&') : '';
+            try {
+                const r = await fetch('/api/tools/report/suggestions' + qs);
+                const d = await r.json();
+                if (r.ok && d.suggestions?.length) {
+                    suggestedTopics.innerHTML = d.suggestions.map(t => 
+                        `<button class="btn btn-outline-secondary btn-sm suggested-topic" data-topic="${escapeAttr(t)}">${escapeHtml(t)}</button>`
+                    ).join('');
+                    suggestedTopics.querySelectorAll('.suggested-topic').forEach(btn => {
+                        btn.addEventListener('click', () => startReportGeneration(btn.dataset.topic));
+                    });
+                } else {
+                    suggestedTopics.innerHTML = '<span class="text-muted small">Нет загруженных файлов</span>';
+                }
+            } catch (e) {
+                suggestedTopics.innerHTML = '<span class="text-danger small">Ошибка загрузки</span>';
+            }
+        });
+
+        generateCustomReportBtn.addEventListener('click', () => {
+            const prompt = reportPromptInput.value.trim();
+            if (!prompt) return;
+            startReportGeneration(prompt);
+        });
+
+        function startReportGeneration(prompt) {
+            reportModal.hide();
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            card.id = 'report-' + Date.now();
+            card.innerHTML = `<i class="bi bi-file-earmark-word fs-4"></i>
+                <div class="flex-grow-1 small">Генерация: ${escapeHtml(prompt)}...
+                    <span class="spinner-border spinner-border-sm ms-1"></span>
+                </div>`;
+            resultsList.insertBefore(card, resultsList.firstChild);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 мин
+            fetch('/api/tools/report/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt, selected_files: getSelectedFiles() }),
+                signal: controller.signal
+            }).then(r => r.json()).then(d => {
+                clearTimeout(timeoutId);
+                if (d.download_url && d.filename) {
+                    card.innerHTML = `<i class="bi bi-file-earmark-word fs-4"></i>
+                        <div class="flex-grow-1 small">${escapeHtml(prompt)}</div>
+                        <a href="${d.download_url}" download="${escapeHtml(d.filename)}"> <i class="bi bi-download"></i> Скачать</a>`;
+                    loadResults();
+                } else {
+                    card.innerHTML = `<i class="bi bi-file-earmark-word fs-4"></i>
+                        <div class="flex-grow-1 small text-danger">Ошибка: ${d.error || 'Неизвестно'}</div>`;
+                }
+            }).catch(e => {
+                clearTimeout(timeoutId);
+                card.innerHTML = `<i class="bi bi-file-earmark-word fs-4"></i>
+                    <div class="flex-grow-1 small text-danger">Ошибка: ${e.message || 'Таймаут'}</div>`;
+            });
+        }
+
+        // === Презентация ===
+        const presentationModal = new bootstrap.Modal(document.getElementById('presentationModal'));
+        const presentationPromptInput = document.getElementById('presentationPromptInput');
+        const generatePresentationBtn = document.getElementById('generatePresentationBtn');
+        const createPresentationBtn = document.getElementById('createPresentationBtn');
+        const presentationSuggestedTopics = document.getElementById('presentationSuggestedTopics');
+
+        createPresentationBtn.addEventListener('click', async () => {
+            onUserAction();
+            presentationPromptInput.value = '';
+            presentationSuggestedTopics.innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div>';
+            presentationModal.show();
+            const sel = getSelectedFiles();
+            const qs = sel.length ? '?' + sel.map(f => 'selected_files=' + encodeURIComponent(f)).join('&') : '';
+            try {
+                const r = await fetch('/api/tools/presentation/suggestions' + qs);
+                const d = await r.json();
+                if (r.ok && d.suggestions?.length) {
+                    presentationSuggestedTopics.innerHTML = d.suggestions.map(t =>
+                        `<button class="btn btn-outline-secondary btn-sm pres-topic" data-topic="${escapeAttr(t)}">${escapeHtml(t)}</button>`
+                    ).join('');
+                    presentationSuggestedTopics.querySelectorAll('.pres-topic').forEach(btn => {
+                        btn.addEventListener('click', () => startPresentationGeneration(btn.dataset.topic));
+                    });
+                } else {
+                    presentationSuggestedTopics.innerHTML = '<span class="text-muted small">Нет загруженных файлов</span>';
+                }
+            } catch (e) {
+                presentationSuggestedTopics.innerHTML = '<span class="text-danger small">Ошибка загрузки</span>';
+            }
+        });
+
+        generatePresentationBtn.addEventListener('click', () => {
+            const prompt = presentationPromptInput.value.trim();
+            if (!prompt) return;
+            startPresentationGeneration(prompt);
+        });
+
+        function startPresentationGeneration(prompt) {
+            presentationModal.hide();
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            card.innerHTML = `<i class="bi bi-easel fs-4"></i>
+                <div class="flex-grow-1 small">Генерация: ${escapeHtml(prompt)}...
+                    <span class="spinner-border spinner-border-sm ms-1"></span>
+                </div>`;
+            resultsList.insertBefore(card, resultsList.firstChild);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 мин (Agentic Pipeline)
+            fetch('/api/tools/presentation/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt, selected_files: getSelectedFiles() }),
+                signal: controller.signal
+            }).then(r => r.json()).then(d => {
+                clearTimeout(timeoutId);
+                if (d.pptx_url && d.filename) {
+                    card.innerHTML = `<i class="bi bi-easel fs-4"></i>
+                        <div class="flex-grow-1 small">${escapeHtml(prompt)}</div>
+                        <a href="${d.pptx_url}" download="${escapeHtml(d.filename)}"><i class="bi bi-file-earmark-ppt"></i> Скачать PPTX</a>`;
+                    loadResults();
+                } else {
+                    card.innerHTML = `<i class="bi bi-easel fs-4"></i>
+                        <div class="flex-grow-1 small text-danger">Ошибка: ${d.error || 'Неизвестно'}</div>`;
+                }
+            }).catch(e => {
+                clearTimeout(timeoutId);
+                card.innerHTML = `<i class="bi bi-easel fs-4"></i>
+                    <div class="flex-grow-1 small text-danger">Ошибка: ${e.message || 'Таймаут'}</div>`;
+            });
+        }
+
+        // Инициализация при загрузке
+        async function init() {
+            await Promise.all([loadFiles(), loadResults()]);
+            checkOllama();
+            updateLocksBasedOnSelection();
+            if (!localStorage.getItem('jimmy_tour_done')) {
+                introJs().setOptions({
+                    steps: [
+                        { intro: 'Привет! Я Jimmy — твой персональный AI-ассистент. Я помогу тебе анализировать документы и создавать отчёты.' },
+                        { element: document.getElementById('filesPanel'), intro: 'Загрузи сюда свои файлы (PDF, Word, Excel). После загрузки обязательно поставь галочку рядом с файлом, чтобы я знал, с чем работать!' },
+                        { element: document.getElementById('chatPanel'), intro: 'Здесь ты можешь задавать мне любые вопросы по выбранным документам. Я отвечу строго по тексту.' },
+                        { element: document.getElementById('toolsPanel'), intro: 'А здесь магия! Я могу автоматически сгенерировать для тебя Word-отчёт или PowerPoint презентацию на основе твоих файлов.' }
+                    ],
+                    exitOnOverlayClick: true
+                }).oncomplete(() => {
+                    localStorage.setItem('jimmy_tour_done', 'true');
+                }).onexit(() => {
+                    localStorage.setItem('jimmy_tour_done', 'true');
+                }).start();
+            }
+        }
+        init();
+    </script>
+</body>
+</html>

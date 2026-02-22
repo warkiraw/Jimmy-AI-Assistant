@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Environment
+.env
+*.env
+!.env.example
+
+# Project data
+chroma_db/
+uploads/
+generated_reports/
+generated_presentations/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal docs (not for repo)
+TECH_NOTES.md
+ПРАВКИ_*.txt
+ТЗ.txt
